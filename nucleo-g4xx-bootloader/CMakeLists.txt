@@ -71,3 +71,33 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+#######################################################################################
+# Linker script generation from template with memory map header
+#######################################################################################
+
+
+# Force Absolute Paths
+get_filename_component(SHARED_LIBS_ABS "${CMAKE_CURRENT_SOURCE_DIR}/../shared" ABSOLUTE)
+set(MEMORY_MAP_HEADER "${SHARED_LIBS_ABS}/memory_map.h")
+
+set(LINKER_SCRIPT_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld.S")
+set(GENERATED_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld")
+
+# Preprocess with explicit absolute include paths
+add_custom_command(
+    OUTPUT "${GENERATED_LINKER_SCRIPT}"
+    COMMAND ${CMAKE_C_COMPILER} -E -P -xc
+            "-D__LINKER_SCRIPT__"           # Define a macro to conditionally include content in the template
+            "-I${CMAKE_CURRENT_SOURCE_DIR}" 
+            "-I${SHARED_LIBS_ABS}"          # Absolute path to shared folder
+            "${LINKER_SCRIPT_TEMPLATE}" 
+            -o "${GENERATED_LINKER_SCRIPT}"
+    DEPENDS "${LINKER_SCRIPT_TEMPLATE}" "${MEMORY_MAP_HEADER}"
+    COMMENT "Preprocessing linker script..."
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    VERBATIM
+)
+
+# Apply to target
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${GENERATED_LINKER_SCRIPT}")
