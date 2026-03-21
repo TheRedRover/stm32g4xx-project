@@ -44,6 +44,15 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
+/**
+ * @brief Error codes for the bootloader.
+ * These codes can be used to indicate specific failure points during the boot process.
+ */
+enum ERROR_CODES {
+    ERROR_INIT_FAILURE,
+    BOOTLOADER_ERROR,
+    // Add more error codes as needed
+};
 
 /* USER CODE END EC */
 
@@ -56,6 +65,8 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+
+void Error_Handler_Blinking(uint8_t code);
 
 /* USER CODE END EFP */
 

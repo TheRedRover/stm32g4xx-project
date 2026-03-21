@@ -49,6 +49,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/bootloader.c
 )
 
 # Add include paths
@@ -79,7 +80,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
 # Force Absolute Paths
 get_filename_component(SHARED_LIBS_ABS "${CMAKE_CURRENT_SOURCE_DIR}/../shared" ABSOLUTE)
-set(MEMORY_MAP_HEADER "${SHARED_LIBS_ABS}/memory_map.h")
+file(GLOB SHARED_HEADERS "${SHARED_LIBS_ABS}/*.h")
+
 
 set(LINKER_SCRIPT_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld.S")
 set(GENERATED_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld")
@@ -93,7 +95,7 @@ add_custom_command(
             "-I${SHARED_LIBS_ABS}"          # Absolute path to shared folder
             "${LINKER_SCRIPT_TEMPLATE}" 
             -o "${GENERATED_LINKER_SCRIPT}"
-    DEPENDS "${LINKER_SCRIPT_TEMPLATE}" "${MEMORY_MAP_HEADER}"
+    DEPENDS "${LINKER_SCRIPT_TEMPLATE}" "${SHARED_HEADERS}"
     COMMENT "Preprocessing linker script..."
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     VERBATIM
@@ -101,3 +103,26 @@ add_custom_command(
 
 # Apply to target
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${GENERATED_LINKER_SCRIPT}")
+
+
+#######################################################################################
+# Generate Binary and Hex files automatically
+#######################################################################################
+
+# This creates the .bin file
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating binary image: ${CMAKE_PROJECT_NAME}.bin"
+)
+
+# This creates the .hex file
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
+    COMMENT "Generating Intel Hex file: ${CMAKE_PROJECT_NAME}.hex"
+)
+
+# Optional: show the size in the terminal every time you build
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+    COMMENT "Final binary size:"
+)

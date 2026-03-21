@@ -4021,7 +4021,7 @@ extern "C" {
   */
 
 #define SD_OCR_CID_CSD_OVERWRIETE   SD_OCR_CID_CSD_OVERWRITE
-#define SD_CMD_SD_APP_STAUS         SD_CMD_SD_APP_STATUS
+#define SD_CMD_SD_FW_STAUS         SD_CMD_SD_FW_STATUS
 
 #if !defined(STM32F1) && !defined(STM32F2) && !defined(STM32F4) && !defined(STM32L1)
 #define eMMC_HIGH_VOLTAGE_RANGE     EMMC_HIGH_VOLTAGE_RANGE
