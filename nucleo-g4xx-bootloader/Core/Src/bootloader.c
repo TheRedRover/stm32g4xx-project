@@ -53,9 +53,9 @@ void Boot_JumpToApplication(uint32_t start_addr)
 }
 
 uint32_t Boot_ChoosePartition(const fw_header_t *fw1_header, const fw_header_t *fw2_header) {
-    uint32_t fw1_valid = (fw1_header->magic_number == FW_HEADER_MAGIC_NUMBER) &&
+    uint32_t fw1_valid = (fw1_header->magic_number == FW_MAGIC_NUMBER) &&
                                  (fw1_header->fw_size > 0);
-    uint32_t fw2_valid = (fw2_header->magic_number == FW_HEADER_MAGIC_NUMBER) &&
+    uint32_t fw2_valid = (fw2_header->magic_number == FW_MAGIC_NUMBER) &&
                                  (fw2_header->fw_size > 0);
 
     fw1_valid = fw1_valid && Boot_ValidateFirmware(fw1_header, FW_1_ADDR, fw1_header->fw_size);
@@ -82,7 +82,7 @@ void Boot_ReadFwHeader(uint32_t header_addr, fw_header_t *header) {
 }
 
 uint8_t Boot_ValidateFirmware(const fw_header_t *header, uint32_t fw_data_addr, uint32_t fw_data_length) {
-    if (header->magic_number != FW_HEADER_MAGIC_NUMBER || header->fw_size == 0) {
+    if (header->magic_number != FW_MAGIC_NUMBER || header->fw_size == 0) {
         return 0;
     }
 
@@ -99,7 +99,7 @@ uint8_t Boot_ValidateFirmware(const fw_header_t *header, uint32_t fw_data_addr, 
 }
 
 uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr, uint32_t header_length) {
-    if (header->magic_number != FW_HEADER_MAGIC_NUMBER) {
+    if (header->magic_number != FW_MAGIC_NUMBER) {
         return 0;
     }
 

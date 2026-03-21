@@ -19,7 +19,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME nucleo-g4xx-bootloader)
+set(CMAKE_PROJECT_NAME nucleo-g4xx-firmware)
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -47,7 +47,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    Core/Src/bootloader.c
+    ${SHARED_LIBS_ABS}/Src/fw_header.c
     # Add user sources here
 )
 
@@ -123,4 +123,29 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
     COMMENT "Final binary size:"
+)
+
+#######################################################################################
+# OTA Image Generation (Header + Firmware)
+#######################################################################################
+
+# Paths to required files
+set(PYTHON_BUILD_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build_image.py")
+set(MEMORY_MAP_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/memory_map.h")
+set(FW_HEADER_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/fw_header.h")
+
+# The raw binary produced by objcopy (we depend on it)
+set(FW_RAW_BIN "${CMAKE_PROJECT_NAME}.bin")
+set(OTA_OUTPUT_IMAGE "${CMAKE_PROJECT_NAME}_OTA.bin")
+
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND python3 ${PYTHON_BUILD_SCRIPT}
+            --fw ${FW_RAW_BIN}
+            --mem-map ${MEMORY_MAP_H}
+            --struct-hdr ${FW_HEADER_H}
+            --out ${OTA_OUTPUT_IMAGE}
+            --version 1  # You can replace this with a CMake variable
+            --git-auto   # Automatically fetch the git hash
+    COMMENT "Generating OTA update image (Header + Firmware)..."
+    VERBATIM
 )

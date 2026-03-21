@@ -22,18 +22,18 @@
 #define BL_SIZE                   (32 * _U(1024))
 
 /* Header & Partition Sizes */
-#define FW_HEADER_SIZE           (1 * _U(1024))
+#define FW_HDR_SIZE           (1 * _U(1024))
 #define SLOT_TOTAL_SIZE          (240 * _U(1024))
 
 /* Slot 1 */
 #define FW_1_HDR_ADDR       (BL_START_ADDR + BL_SIZE)
-#define FW_1_ADDR           (FW_1_HDR_ADDR + FW_HEADER_SIZE)
-#define FW_1_SIZE           (SLOT_TOTAL_SIZE - FW_HEADER_SIZE)
+#define FW_1_ADDR           (FW_1_HDR_ADDR + FW_HDR_SIZE)
+#define FW_1_SIZE           (SLOT_TOTAL_SIZE - FW_HDR_SIZE)
 
 /* Slot 2 */
 #define FW_2_HDR_ADDR       (FW_1_HDR_ADDR + SLOT_TOTAL_SIZE)
-#define FW_2_ADDR           (FW_2_HDR_ADDR + FW_HEADER_SIZE)
-#define FW_2_SIZE           (SLOT_TOTAL_SIZE - FW_HEADER_SIZE)
+#define FW_2_ADDR           (FW_2_HDR_ADDR + FW_HDR_SIZE)
+#define FW_2_SIZE           (SLOT_TOTAL_SIZE - FW_HDR_SIZE)
 
 
 #ifdef __cplusplus

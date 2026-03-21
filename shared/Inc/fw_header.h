@@ -5,9 +5,13 @@
  extern "C" {
 #endif
 
-#include <assert.h>
+#include "memory_map.h"
 
-#define FW_HEADER_MAGIC_NUMBER 0x4734465748
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#define FW_MAGIC_NUMBER 0x4734465748
 
 typedef struct {
     uint32_t magic_number;
@@ -22,6 +26,17 @@ typedef struct {
 } fw_header_t;
 
 _Static_assert(sizeof(fw_header_t) == 128, "Header size must be exactly 128 bytes");
+
+/**
+ * @brief Locates the firmware header in Flash memory.
+ * @return Pointer to the fw_header_t structure.
+ */
+fw_header_t* Header_GetCurrentFwHeader(void);
+
+/**
+ * @brief Identifies and prints firmware metadata to the console.
+ */
+void Header_PrintMetadata(const fw_header_t *header);
 
 #ifdef __cplusplus
 }
