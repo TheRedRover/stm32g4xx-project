@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include "stm32g4xx_hal.h"
+
 #include "fw_header.h"
 
 typedef struct {
@@ -22,13 +24,6 @@ typedef struct {
   */
 void Boot_JumpToApplication(uint32_t app_start_addr);
 
-/**
-  * @brief  Chooses the active partition for booting.
-  * @param[in]  fw1_header: Pointer to the firmware header of the first partition.
-  * @param[in]  fw2_header: Pointer to the firmware header of the second partition.
-  * @retval The starting address of the chosen firmware partition. Returns 0 if no valid partition is found.
-  */
-uint32_t Boot_ChoosePartition(const fw_header_t *fw1_header, const fw_header_t *fw2_header);
 
 /**
   * @brief  Reads the firmware header from the specified address.
@@ -54,8 +49,22 @@ uint8_t Boot_ValidateFirmware(const fw_header_t *header, uint32_t fw_data_addr, 
   * @param[in]  header_length: The length of the firmware header.
   * @retval 1 if the header is valid, 0 otherwise.
   */
-uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr, uint32_t header_length);
+uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr);
 
+/**
+ * @brief Copies firmware from Slot 2 to Slot 1
+ * @param src_addr Address of Slot 2 (Source)
+ * @param dst_addr Address of Slot 1 (Destination)
+ * @param size Size of firmware to copy
+ * @return HAL_StatusTypeDef
+ */
+HAL_StatusTypeDef Boot_PerformCopyUpdate(uint32_t src_addr, uint32_t dst_addr, uint32_t size);
+
+/**
+ * @brief Checks for a firmware update condition.
+ * @retval 1 if a firmware update is available, 0 otherwise.
+ */
+uint8_t Boot_CheckForFirmwareUpdate(void);
 
 
 #ifdef __cplusplus

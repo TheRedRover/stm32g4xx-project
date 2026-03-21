@@ -1,80 +1,82 @@
-#include "bootloader.h"
 
-#include "memory_map.h"
+#include "bootloader.h"
 
 #include "stm32g4xx_hal.h"
 
+#include "memory_map.h"
+
+#include <stdint.h>
+#include <stdio.h>
+
 typedef void (*pFunction)(void);
 
+__attribute__((naked, noinline))
+static void do_jump(uint32_t sp, uint32_t pc)
+{
+    __asm volatile (
+        "msr msp, %0    \n"
+        "dsb            \n"
+        "isb            \n"
+        "bx  %1         \n"
+        : : "r" (sp), "r" (pc) : "memory"
+    );
+}
 
 void Boot_JumpToApplication(uint32_t start_addr)
 {
-    pFunction appMainFunction;
+    // static variables are stored in RAM, not on the stack.
+    // This prevents them from being lost after __set_MSP()
+    static volatile uint32_t appStack;
+    static volatile uint32_t appResetHandler;
+    static pFunction appEntry;
+
     volatile vector_table_t *app_vectors = (vector_table_t *)start_addr;
 
-    // Sanity check
     if ((app_vectors->stack_pointer & 0xFF000000U) != 0x20000000U) {
+#ifdef DEBUG
+        printf("Invalid stack pointer in vector table: %08lX\n", app_vectors->stack_pointer);
+#endif
         return;
     }
 
     if ((app_vectors->reset_handler & 0xFF000000U) != 0x08000000U) {
+#ifdef DEBUG
+        printf("Invalid reset handler in vector table: %08lX\n", app_vectors->reset_handler);
+#endif
         return;
     }
 
-    // Disable interrupts
+    appStack = app_vectors->stack_pointer;
+    appResetHandler = app_vectors->reset_handler;
+    appEntry = (pFunction)appResetHandler;
+
+#ifdef DEBUG
+    printf("[BL] Jumping to app at: 0x%08lX\n", start_addr);
+    printf("[BL] App SP: 0x%08lX, App RH: 0x%08lX\n", appStack, appResetHandler);
+#endif
+
     __disable_irq();
 
-    // De-initialize peripherals and reset clock configuration
-    HAL_DeInit();
     HAL_RCC_DeInit();
+    HAL_DeInit();
 
-    // Disable SysTick timer and reset its registers
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
     SysTick->VAL  = 0;
 
-    // Disable all external interrupts and clear pending flags
-    for (uint32_t i = 0; i < (sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0])); i++) {
-        NVIC->ICER[i] = 0xFFFFFFFFU;
-        NVIC->ICPR[i] = 0xFFFFFFFFU;
+    for (uint32_t i = 0; i < 8; i++) {
+        NVIC->ICER[i] = 0xFFFFFFFF;
+        NVIC->ICPR[i] = 0xFFFFFFFF;
     }
 
-    // Relocate Vector Table (VTOR) to the application start address
+    __DSB();
+    __ISB();
+
     SCB->VTOR = start_addr;
+    __DSB();
+    __ISB();
 
-    // Final CPU State Preparation
-    __set_CONTROL(0); // Switch to privileged mode using MSP
-    __set_MSP(app_vectors->stack_pointer); // Set Main Stack Pointer
-    __ISB(); // Instruction Synchronization Barrier
-
-    // Jump to the application's Reset_Handler
-    appMainFunction = (pFunction)(app_vectors->reset_handler);
-    appMainFunction();
-}
-
-uint32_t Boot_ChoosePartition(const fw_header_t *fw1_header, const fw_header_t *fw2_header) {
-    uint32_t fw1_valid = (fw1_header->magic_number == FW_MAGIC_NUMBER) &&
-                                 (fw1_header->fw_size > 0);
-    uint32_t fw2_valid = (fw2_header->magic_number == FW_MAGIC_NUMBER) &&
-                                 (fw2_header->fw_size > 0);
-
-    fw1_valid = fw1_valid && Boot_ValidateFirmware(fw1_header, FW_1_ADDR, fw1_header->fw_size);
-    fw2_valid = fw2_valid && Boot_ValidateFirmware(fw2_header, FW_2_ADDR, fw2_header->fw_size);
-
-    fw1_valid = fw1_valid && Boot_ValidateHeader(fw1_header, FW_1_HDR_ADDR, sizeof(fw_header_t));
-    fw2_valid = fw2_valid && Boot_ValidateHeader(fw2_header, FW_2_HDR_ADDR, sizeof(fw_header_t));
-
-    if (fw1_valid && fw2_valid) {
-        // If both are valid, choose the one with the higher version
-        return (fw1_header->version >= fw2_header->version) ? FW_1_ADDR : FW_2_ADDR;
-    } else if (fw1_valid) {
-        return FW_1_ADDR;
-    } else if (fw2_valid) {
-        return FW_2_ADDR;
-    }
-
-    // No valid firmware found
-    return 0;
+    do_jump(app_vectors->stack_pointer, app_vectors->reset_handler);
 }
 
 void Boot_ReadFwHeader(uint32_t header_addr, fw_header_t *header) {
@@ -86,30 +88,97 @@ uint8_t Boot_ValidateFirmware(const fw_header_t *header, uint32_t fw_data_addr, 
         return 0;
     }
 
-    CRC_HandleTypeDef hcrc;
+    if (header->magic_number != FW_MAGIC_NUMBER || fw_data_length == 0) return 0;
 
-    HAL_CRC_Init(&hcrc);
+    CRC_HandleTypeDef hcrc = {0};
+    hcrc.Instance = CRC;
+    hcrc.Init.DefaultPolynomialUse    = DEFAULT_POLYNOMIAL_ENABLE;
+    hcrc.Init.DefaultInitValueUse     = DEFAULT_INIT_VALUE_ENABLE;
+    hcrc.Init.InputDataInversionMode  = CRC_INPUTDATA_INVERSION_BYTE;
+    hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
+    hcrc.InputDataFormat              = CRC_INPUTDATA_FORMAT_BYTES; 
 
-    // Calculate CRC of the firmware data
-    const uint32_t calculated_crc = HAL_CRC_Calculate(&hcrc, (uint32_t *)fw_data_addr, fw_data_length / 4);
+    if (HAL_CRC_Init(&hcrc) != HAL_OK) return 0;
 
+    uint32_t calculated = HAL_CRC_Calculate(&hcrc, (uint32_t *)fw_data_addr, fw_data_length);
+    
+    calculated ^= 0xFFFFFFFF; 
+#ifdef DEBUG
+    printf("CRC Calc: %08lX | Exp: %08lX | Addr: %08lX\n", calculated, header->fw_crc, fw_data_addr);
+#endif
     HAL_CRC_DeInit(&hcrc);
-    // Compare with expected CRC in the header
-    return (calculated_crc == header->fw_crc);
+    return (calculated == header->fw_crc);
 }
 
-uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr, uint32_t header_length) {
+uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr) {
     if (header->magic_number != FW_MAGIC_NUMBER) {
         return 0;
     }
 
-    CRC_HandleTypeDef hcrc;
-    HAL_CRC_Init(&hcrc);
+    CRC_HandleTypeDef hcrc = {0};
+    hcrc.Instance = CRC;
+    hcrc.Init.DefaultPolynomialUse    = DEFAULT_POLYNOMIAL_ENABLE;
+    hcrc.Init.DefaultInitValueUse     = DEFAULT_INIT_VALUE_ENABLE;
+    hcrc.Init.InputDataInversionMode  = CRC_INPUTDATA_INVERSION_BYTE;
+    hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
+    hcrc.InputDataFormat              = CRC_INPUTDATA_FORMAT_BYTES; 
 
-    // Calculate CRC of the header (excluding the CRC field itself)
-    const uint32_t header_crc = HAL_CRC_Calculate(&hcrc, (uint32_t *)header, sizeof(fw_header_t) - sizeof(uint32_t));
+    if (HAL_CRC_Init(&hcrc) != HAL_OK) return 0;
+
+    uint32_t calculated = HAL_CRC_Calculate(&hcrc, (uint32_t *)header_addr, sizeof(fw_header_t) - sizeof(uint32_t));
+    calculated ^= 0xFFFFFFFF;
 
     HAL_CRC_DeInit(&hcrc);
+#ifdef DEBUG
+    printf("Calculated Header CRC vs Expected Header CRC [%08lX] [%08lX]\n", calculated, header->header_crc);
+#endif
     // Compare with expected CRC in the header
-    return (header_crc == header->header_crc);
+    return (calculated == header->header_crc);
+}
+
+HAL_StatusTypeDef Boot_PerformCopyUpdate(uint32_t src_addr, uint32_t dst_addr, uint32_t size)
+{
+    HAL_StatusTypeDef status = HAL_OK;
+    uint32_t page_error = 0;
+    FLASH_EraseInitTypeDef erase_init;
+
+    HAL_FLASH_Unlock();
+
+    // Calculate how many pages to erase based on size
+    uint32_t num_pages = (size + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE;
+    
+    erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase_init.Banks     = FLASH_BANK_1; 
+    erase_init.Page      = (dst_addr - FLASH_BASE) / FLASH_PAGE_SIZE;
+    erase_init.NbPages   = num_pages;
+
+#ifdef DEBUG
+    printf("Erasing Slot 1: %ld pages...\r\n", num_pages);
+#endif
+    status = HAL_FLASHEx_Erase(&erase_init, &page_error);
+    if (status != HAL_OK) {
+        HAL_FLASH_Lock();
+        return status;
+    }
+
+#ifdef DEBUG
+    printf("Copying data...\r\n");
+#endif
+    for (uint32_t i = 0; i < size; i += 8) {
+        uint64_t data = *(volatile uint64_t*)(src_addr + i);
+        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, dst_addr + i, data);
+        
+        if (status != HAL_OK) {
+            break;
+        }
+    }
+
+    HAL_FLASH_Lock();
+    return status;
+}
+
+uint8_t Boot_CheckForFirmwareUpdate(void) {
+    // This function can be implemented to check for a specific condition (e.g., a GPIO pin state, a command received over UART, etc.)
+    // For demonstration purposes, we'll just return 0 (no update)
+    return 0;
 }

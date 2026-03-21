@@ -24,6 +24,7 @@
 #include "bootloader.h"
 #include "memory_map.h"
 #include "fw_header.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -73,7 +74,6 @@ int main(void)
   /* USER CODE BEGIN 1 */
   fw_header_t fw1_header;
   fw_header_t fw2_header;
-  uint32_t app_start_addr;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -117,13 +117,28 @@ int main(void)
     Boot_ReadFwHeader(FW_1_HDR_ADDR, &fw1_header);
     Boot_ReadFwHeader(FW_2_HDR_ADDR, &fw2_header);
 
-    app_start_addr = Boot_ChoosePartition(&fw1_header, &fw2_header);
-    if (app_start_addr != 0) {
-        Boot_JumpToApplication(app_start_addr);
+    if (Boot_CheckForFirmwareUpdate()) {
+      // Check the firmware in Slot 2 and if valid, copy it to Slot 1
+      if (Boot_ValidateFirmware(&fw2_header, FW_2_ADDR, fw2_header.fw_size) &&
+          Boot_ValidateHeader(&fw2_header, FW_2_HDR_ADDR))
+      {
+        Boot_PerformCopyUpdate(FW_2_ADDR, FW_1_ADDR, fw2_header.fw_size);
+      }
+    }
+#define DEBUG
+
+    if (Boot_ValidateFirmware(&fw1_header, FW_1_ADDR, fw1_header.fw_size) &&
+        Boot_ValidateHeader(&fw1_header, FW_1_HDR_ADDR))
+    {
+#ifdef DEBUG
+      printf("The valid firmware in [%08X] is ready to run.\r\n", FW_1_ADDR);
+#endif
+      Boot_JumpToApplication(FW_1_ADDR);
     }
 
     /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
+
     // If we reach this point, it means the bootloader has encountered an error
     Error_Handler_Blinking(BOOTLOADER_ERROR);
   }
@@ -227,7 +242,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
-
+  
   /*Configure GPIO pin : GREEN_LED_Pin */
   GPIO_InitStruct.Pin = GREEN_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -241,6 +256,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+#ifdef DEBUG
+int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&hcom_uart[0], (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+#endif
 
 void Error_Handler_Blinking(uint8_t code)
 {

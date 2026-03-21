@@ -11,9 +11,20 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define FW_MAGIC_NUMBER 0x4734465748
+#define FW_MAGIC_NUMBER 0x47344657
+/* Defines for packing/unpacking */
+#define VER_MAJOR_SHIFT  24
+#define VER_MINOR_SHIFT  16
+#define VER_PATCH_MASK   0xFFFF
+#define VER_BYTE_MASK    0xFF
 
-typedef struct {
+/* Packing macro: converts 1, 4, 12 -> 0x0104000C */
+#define PACK_VERSION(maj, min, patch) \
+    (((uint32_t)(maj) << VER_MAJOR_SHIFT) | \
+     ((uint32_t)(min) << VER_MINOR_SHIFT) | \
+     ((uint32_t)(patch) & VER_PATCH_MASK))
+
+typedef struct __attribute__((packed)) {
     uint32_t magic_number;
     uint32_t fw_size;
     uint32_t version;
@@ -37,6 +48,8 @@ fw_header_t* Header_GetCurrentFwHeader(void);
  * @brief Identifies and prints firmware metadata to the console.
  */
 void Header_PrintMetadata(const fw_header_t *header);
+
+void Header_PrintVersion(uint32_t version);
 
 #ifdef __cplusplus
 }

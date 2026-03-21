@@ -77,7 +77,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  __enable_irq();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -104,8 +104,15 @@ int main(void)
     Error_Handler();
   }
 
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+  printf("We are working!!!\r\n");
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  const fw_header_t* pHeader = Header_GetCurrentFwHeader();
+  Header_PrintMetadata(pHeader);
+
   while (1)
   {
 
@@ -199,7 +206,11 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&hcom_uart[0], (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
 /* USER CODE END 4 */
 
 /**

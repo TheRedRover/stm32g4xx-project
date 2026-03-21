@@ -104,48 +104,55 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${GENERATED_LINKER_SCRIPT}")
 
 
 #######################################################################################
-# Generate Binary and Hex files automatically
+# Generate Binary, Hex, and OTA files
 #######################################################################################
 
-# This creates the .bin file
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
-    COMMENT "Generating binary image: ${CMAKE_PROJECT_NAME}.bin"
+# 1. Gather Metadata
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
+if(NOT GIT_HASH)
+    set(GIT_HASH "00000000")
+endif()
 
-# This creates the .hex file
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
-    COMMENT "Generating Intel Hex file: ${CMAKE_PROJECT_NAME}.hex"
-)
+string(TIMESTAMP BUILD_TIMESTAMP "%Y%m%d_%H%M")
 
-# Optional: show the size in the terminal every time you build
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-    COMMENT "Final binary size:"
-)
+set(FINAL_NAME "${CMAKE_PROJECT_NAME}_${GIT_HASH}_${BUILD_TIMESTAMP}")
+set(BIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}.bin")
+set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}.hex")
+set(OTA_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}_OTA.bin")
 
-#######################################################################################
-# OTA Image Generation (Header + Firmware)
-#######################################################################################
-
-# Paths to required files
+# 3. Define Paths for OTA Script
 set(PYTHON_BUILD_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build_image.py")
 set(MEMORY_MAP_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/memory_map.h")
 set(FW_HEADER_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/fw_header.h")
 
-# The raw binary produced by objcopy (we depend on it)
-set(FW_RAW_BIN "${CMAKE_PROJECT_NAME}.bin")
-set(OTA_OUTPUT_IMAGE "${CMAKE_PROJECT_NAME}_OTA.bin")
-
+# 4. Single POST_BUILD sequence to guarantee execution order
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    # Generate standard Binary
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${BIN_FILE}
+    
+    # Generate Intel Hex
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${HEX_FILE}
+    
+    # Generate OTA Image (Depends on the .bin created above)
     COMMAND python3 ${PYTHON_BUILD_SCRIPT}
-            --fw ${FW_RAW_BIN}
+            --fw ${BIN_FILE}
             --mem-map ${MEMORY_MAP_H}
             --struct-hdr ${FW_HEADER_H}
-            --out ${OTA_OUTPUT_IMAGE}
-            --version 1  # You can replace this with a CMake variable
-            --git-auto   # Automatically fetch the git hash
-    COMMENT "Generating OTA update image (Header + Firmware)..."
+            --out ${OTA_FILE}
+            --version "1.0.0"
+            --git-hash "${GIT_HASH}"
+            
+    # Show Size
+    COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+    
+    COMMENT "Processing artifacts: Generating BIN, HEX, and OTA images..."
     VERBATIM
 )
+
+message(STATUS "OTA will be generated at: ${OTA_FILE}")
