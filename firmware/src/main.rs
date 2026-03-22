@@ -41,9 +41,10 @@ fn main() -> ! {
     // GPIO PA5 as push-pull output (LED)
     let mut led = Output::new(p.PA5, Level::High, Speed::Low);
 
-    // UART1 on PA9 (TX) at 115200 baud
+    // Use the NUCLEO-G474RE default ST-LINK virtual COM port wiring:
+    // LPUART1 on PA2 (TX) / PA3 (RX). We only need TX here.
     let uart_config = UartConfig::default(); // 115200 8N1
-    let mut tx = UartTx::new_blocking(p.USART1, p.PA9, uart_config).unwrap();
+    let mut tx = UartTx::new_blocking(p.LPUART1, p.PA2, uart_config).unwrap();
 
     defmt::info!("Firmware started!");
     let _ = tx.blocking_write(b"We are working!!!\r\n");
