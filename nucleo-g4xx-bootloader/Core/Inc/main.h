@@ -46,13 +46,18 @@ extern "C" {
 /* USER CODE BEGIN EC */
 /**
  * @brief Error codes for the bootloader.
- * These codes can be used to indicate specific failure points during the boot process.
+ * These codes can be used to indicate specific failure points during the boot
+ * process.
  */
-enum ERROR_CODES
-{
-  ERROR_INIT_FAILURE,
-  BOOTLOADER_ERROR,
+enum BLINKINS {
+  BOOTLOADER_FALLBACK =
+      1, // Reserved as standard "1 blink" for fallback state where the
+         // bootloader is running but no valid firmware was found
+  ERROR_INIT_FAILURE, // Indicates a failure during initialization (e.g., CRC
+                      // init failure)
+  ERROR_FIRST_BOOT,   // Indicates a failure during the first boot process
   // Add more error codes as needed
+  ERROR_BANK_SWITCH,
 };
 
 /* USER CODE END EC */
@@ -66,8 +71,6 @@ enum ERROR_CODES
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
-void Error_Handler_Blinking(uint8_t code);
 
 /* USER CODE END EFP */
 

@@ -3,22 +3,31 @@
 
 #include "stm32g4xx_hal.h"
 
+#include "debug_print.h"
+#include "helpers.h"
 #include "memory_map.h"
+#include "public_key.h"
+
+#include <tinycrypt/sha256.h>
+#include <uECC.h>
 
 #include <stdint.h>
-#include <stdio.h>
+#include <string.h>
+
+#define HASH_CHUNK_SIZE 256
+#define uECC_PLATFORM uECC_arm_thumb2
 
 typedef void (*pFunction)(void);
 
 __attribute__((naked, noinline)) static void do_jump(uint32_t sp, uint32_t pc)
 {
-  __asm volatile("msr msp, %0    \n"
-                 "dsb            \n"
-                 "isb            \n"
-                 "bx  %1         \n"
-                 :
-                 : "r"(sp), "r"(pc)
-                 : "memory");
+  __asm__ volatile("msr msp, r0    \n" // sp is in r0
+                   "dsb            \n"
+                   "isb            \n"
+                   "bx  r1         \n" // pc is in r1
+                   :
+                   :
+                   : "memory");
 }
 
 void Boot_JumpToApplication(uint32_t start_addr)
@@ -27,17 +36,19 @@ void Boot_JumpToApplication(uint32_t start_addr)
 
   if ((app_vectors->stack_pointer & 0xFF000000U) != 0x20000000U)
   {
-#ifdef DEBUG
-    printf("Invalid stack pointer in vector table: %08lX\n", app_vectors->stack_pointer);
-#endif
+
+    DBG_PRINT("Invalid stack pointer in vector table: %08" PRIX32 "\n",
+              app_vectors->stack_pointer);
+
     return;
   }
 
   if ((app_vectors->reset_handler & 0xFF000000U) != 0x08000000U)
   {
-#ifdef DEBUG
-    printf("Invalid reset handler in vector table: %08lX\n", app_vectors->reset_handler);
-#endif
+
+    DBG_PRINT("Invalid reset handler in vector table: %08" PRIX32 "\n",
+              app_vectors->reset_handler);
+
     return;
   }
 
@@ -66,24 +77,36 @@ void Boot_JumpToApplication(uint32_t start_addr)
   do_jump(app_vectors->stack_pointer, app_vectors->reset_handler);
 }
 
-void Boot_ReadFwHeader(uint32_t header_addr, fw_header_t *header)
+uint8_t Boot_CheckMN(const fw_header_t *header)
 {
-  *header = *((fw_header_t *) header_addr);
+  return (header->magic_number == FW_MAGIC_NUMBER) ? STAT_OK : FAILURE;
 }
 
-uint8_t Boot_ValidateFirmware(const fw_header_t *header,
-                              uint32_t           fw_data_addr,
-                              uint32_t           fw_data_length)
+uint8_t Boot_CheckFwSize(const fw_header_t *header)
 {
-  if (header->magic_number != FW_MAGIC_NUMBER || header->fw_size == 0)
+  return (header->fw_size > 0 && header->fw_size <= FW_SIZE) ? STAT_OK
+                                                             : FAILURE;
+}
+
+int8_t Boot_CmpVersions(const fw_header_t *header1, const fw_header_t *header2)
+{
+  if (header1->version > header2->version)
   {
-    return 0;
+    return 1; // header1 is newer
+  }
+  else if (header1->version < header2->version)
+  {
+    return -1; // header1 is older
   }
 
-  if (header->magic_number != FW_MAGIC_NUMBER || fw_data_length == 0)
-    return 0;
+  return 0; // versions are the same
+}
 
-  CRC_HandleTypeDef hcrc            = {0};
+static uint32_t Internal_ComputeCRC(const uint32_t *data, uint32_t length)
+{
+  uint32_t          result = 0;
+  CRC_HandleTypeDef hcrc   = {0};
+
   hcrc.Instance                     = CRC;
   hcrc.Init.DefaultPolynomialUse    = DEFAULT_POLYNOMIAL_ENABLE;
   hcrc.Init.DefaultInitValueUse     = DEFAULT_INIT_VALUE_ENABLE;
@@ -91,101 +114,242 @@ uint8_t Boot_ValidateFirmware(const fw_header_t *header,
   hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
   hcrc.InputDataFormat              = CRC_INPUTDATA_FORMAT_BYTES;
 
-  if (HAL_CRC_Init(&hcrc) != HAL_OK)
-    return 0;
-
-  uint32_t calculated = HAL_CRC_Calculate(&hcrc, (uint32_t *) fw_data_addr, fw_data_length);
-
-  calculated ^= 0xFFFFFFFF;
-#ifdef DEBUG
-  printf("CRC Calc: %08lX | Exp: %08lX | Addr: %08lX\n", calculated, header->fw_crc, fw_data_addr);
-#endif
-  HAL_CRC_DeInit(&hcrc);
-  return (calculated == header->fw_crc);
-}
-
-uint8_t Boot_ValidateHeader(const fw_header_t *header, uint32_t header_addr)
-{
-  if (header->magic_number != FW_MAGIC_NUMBER)
+  if (HAL_CRC_Init(&hcrc) == HAL_OK)
   {
-    return 0;
+    result = HAL_CRC_Calculate(&hcrc, data, length) ^ 0xFFFFFFFF;
+    HAL_CRC_DeInit(&hcrc);
   }
 
-  CRC_HandleTypeDef hcrc            = {0};
-  hcrc.Instance                     = CRC;
-  hcrc.Init.DefaultPolynomialUse    = DEFAULT_POLYNOMIAL_ENABLE;
-  hcrc.Init.DefaultInitValueUse     = DEFAULT_INIT_VALUE_ENABLE;
-  hcrc.Init.InputDataInversionMode  = CRC_INPUTDATA_INVERSION_BYTE;
-  hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
-  hcrc.InputDataFormat              = CRC_INPUTDATA_FORMAT_BYTES;
-
-  if (HAL_CRC_Init(&hcrc) != HAL_OK)
-    return 0;
-
-  uint32_t calculated =
-      HAL_CRC_Calculate(&hcrc, (uint32_t *) header_addr, sizeof(fw_header_t) - sizeof(uint32_t));
-  calculated ^= 0xFFFFFFFF;
-
-  HAL_CRC_DeInit(&hcrc);
-#ifdef DEBUG
-  printf("Calculated Header CRC vs Expected Header CRC [%08lX] [%08lX]\n",
-         calculated,
-         header->header_crc);
-#endif
-  // Compare with expected CRC in the header
-  return (calculated == header->header_crc);
+  return result;
 }
 
-HAL_StatusTypeDef Boot_PerformCopyUpdate(uint32_t src_addr, uint32_t dst_addr, uint32_t size)
+uint8_t Boot_ValidateFwCRC(const fw_header_t *header)
 {
-  HAL_StatusTypeDef      status     = HAL_OK;
-  uint32_t               page_error = 0;
-  FLASH_EraseInitTypeDef erase_init;
-
-  HAL_FLASH_Unlock();
-
-  // Calculate how many pages to erase based on size
-  uint32_t num_pages = (size + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE;
-
-  erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
-  erase_init.Banks     = FLASH_BANK_1;
-  erase_init.Page      = (dst_addr - FLASH_BASE) / FLASH_PAGE_SIZE;
-  erase_init.NbPages   = num_pages;
-
-#ifdef DEBUG
-  printf("Erasing partition: %ld pages...\r\n", num_pages);
-#endif
-  status = HAL_FLASHEx_Erase(&erase_init, &page_error);
-  if (status != HAL_OK)
+  if (header->crc == 0 || header->fw_size == 0)
   {
-    HAL_FLASH_Lock();
-    return status;
+    return FAILURE;
   }
 
-#ifdef DEBUG
-  printf("Copying data...\r\n");
-#endif
-  for (uint32_t i = 0; i < size; i += 8)
-  {
-    uint64_t data = *(volatile uint64_t *) (src_addr + i);
-    status        = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, dst_addr + i, data);
+  const uint32_t *start_pos =
+      (const uint32_t *) ((const uint8_t *) header +
+                          offsetof(fw_header_t, magic_number));
+  const uint32_t total_len =
+      (sizeof(fw_header_t) - offsetof(fw_header_t, magic_number)) +
+      header->fw_size;
 
-    if (status != HAL_OK)
+  uint32_t calculated = Internal_ComputeCRC(start_pos, total_len);
+
+  DBG_PRINT("CRC Calc: %08" PRIX32 " | Exp: %08" PRIX32 " | Len: %" PRIu32 "\n",
+            calculated,
+            header->crc,
+            total_len);
+  return (calculated == header->crc) ? STAT_OK : FAILURE;
+}
+
+/**
+ * @brief  This function is compute sha256 hash of the firmware for signature
+ * verification.
+ * @param  header: pointer to the firmware header
+ */
+static uint8_t calculate_sha256(const fw_header_t *header,
+                                uint8_t digest[TC_SHA256_DIGEST_SIZE])
+{
+
+  DBG_PRINT("Calculating SHA256...\r\n");
+
+  struct tc_sha256_state_struct ctx;
+  if (!tc_sha256_init(&ctx))
+  {
+
+    DBG_PRINT("SHA256 initialization failed.\r\n");
+
+    return FAILURE;
+  }
+
+  const uint8_t *ptr = (const uint8_t *) header + offsetof(fw_header_t, crc);
+  uint32_t       remaining =
+      (sizeof(fw_header_t) - offsetof(fw_header_t, crc)) + header->fw_size;
+
+  while (remaining > 0)
+  {
+    uint32_t chunk =
+        (remaining > HASH_CHUNK_SIZE) ? HASH_CHUNK_SIZE : remaining;
+
+    if (!tc_sha256_update(&ctx, ptr, chunk))
     {
-#ifdef DEBUG
-      printf("Error programming flash at address: %08lX\n", dst_addr + i);
-#endif
+
+      DBG_PRINT("SHA256 update failed at chunk starting at offset %" PRIu32
+                "\n",
+                (uint32_t) (ptr - (const uint8_t *) header));
+
+      return FAILURE;
+    }
+
+    ptr += chunk;
+    remaining -= chunk;
+  }
+
+  DBG_PRINT("SHA256 calculation completed.\r\n");
+
+  return tc_sha256_final(digest, &ctx) ? STAT_OK : FAILURE;
+}
+
+uint8_t Boot_ValidateSignature(const fw_header_t *header)
+{
+
+  DBG_PRINT("Validating firmware signature...\r\n");
+
+  uint8_t hash[TC_SHA256_DIGEST_SIZE];
+  if (calculate_sha256(header, hash) != STAT_OK)
+  {
+
+    DBG_PRINT("SHA256 calculation failed.\r\n");
+
+    return FAILURE;
+  }
+
+  const struct uECC_Curve_t *curve = uECC_secp256r1();
+
+  DBG_PRINT("Verifying signature with uECC...\r\n");
+
+  return uECC_verify(g_public_key, hash, sizeof(hash), header->signature, curve)
+             ? STAT_OK
+             : FAILURE;
+}
+
+uint8_t Boot_ValidateSlot(const fw_header_t *header)
+{
+
+  DBG_PRINT("Validating firmware slot at header address: %08" PRIX32 "\n",
+            (uint32_t) header);
+
+  return (Boot_CheckMN(header) == STAT_OK &&
+          Boot_CheckFwSize(header) == STAT_OK &&
+          Boot_ValidateFwCRC(header) == STAT_OK &&
+          Boot_ValidateSignature(header) == STAT_OK)
+             ? STAT_OK
+             : FAILURE;
+}
+
+HAL_StatusTypeDef Boot_ToggleBank()
+{
+
+  DBG_PRINT("=========================\r\n");
+  DBG_PRINT("|Toggling active bank...|\r\n");
+  DBG_PRINT("=========================\r\n");
+
+  FLASH_OBProgramInitTypeDef OBInit;
+  HAL_FLASH_Unlock();
+  __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_OPTVERR);
+  HAL_FLASH_OB_Unlock();
+  HAL_FLASHEx_OBGetConfig(&OBInit);
+
+  OBInit.OptionType = OPTIONBYTE_USER;
+  OBInit.USERType   = OB_USER_BFB2;
+
+  if (((OBInit.USERConfig) & (OB_BFB2_ENABLE)) == OB_BFB2_ENABLE)
+  {
+    OBInit.USERConfig = OB_BFB2_DISABLE;
+  }
+  else
+  {
+    OBInit.USERConfig = OB_BFB2_ENABLE;
+  }
+
+  do
+  {
+    if (HAL_FLASHEx_OBProgram(&OBInit) != HAL_OK)
+    {
       break;
+    }
+    if (HAL_FLASH_OB_Launch() != HAL_OK)
+    {
+      break;
+    }
+
+  } while (0);
+
+  HAL_FLASH_OB_Lock();
+  HAL_FLASH_Lock();
+
+  // we should never reach this point as the system will reset before, but just
+  // in case, report success
+  return HAL_OK;
+}
+
+VALID_BANK Boot_ChooseBankToBoot(const fw_header_t *fw1_header,
+                                 const fw_header_t *fw2_header)
+{
+
+  DBG_PRINT("Boot_ChooseBankToBoot\r\n");
+
+  uint8_t b1_layout = (Boot_CheckMN(fw1_header) == STAT_OK &&
+                       Boot_CheckFwSize(fw1_header) == STAT_OK);
+  uint8_t b2_layout = (Boot_CheckMN(fw2_header) == STAT_OK &&
+                       Boot_CheckFwSize(fw2_header) == STAT_OK);
+
+  uint8_t slot2_is_newer = (b1_layout && b2_layout) &&
+                           (Boot_CmpVersions(fw2_header, fw1_header) > 0);
+
+  if (slot2_is_newer)
+  {
+
+    DBG_PRINT("Slot 2 has a newer version than Slot 1.\r\n");
+
+    if (Boot_ValidateSlot(fw2_header) == STAT_OK)
+    {
+      return SLOT_2; // Bank switch required
+    }
+    else
+    {
+      // Optional: mark slot as invalid to prevent next checks
+      // e.g. remove magic number or set fw_size to 0
     }
   }
 
-  HAL_FLASH_Lock();
-  return status;
+  DBG_PRINT(
+      "Slot 2 is not newer than Slot 1, or one of the slots has an invalid "
+      "layout.\r\n");
+
+  if (Boot_ValidateSlot(fw1_header) == STAT_OK)
+  {
+    return SLOT_1;
+  }
+  else if (!slot2_is_newer && b2_layout)
+  {
+
+    DBG_PRINT("Slot 1 is not valid, but Slot 2 has a valid layout. Checking "
+              "signature...\r\n");
+
+    // Optional: mark slot as invalid to prevent next checks
+    // e.g. remove magic number or set fw_size to 0
+    if (Boot_ValidateSlot(fw2_header) == STAT_OK)
+    {
+      return SLOT_2;
+    }
+    else
+    {
+      // Optional: mark slot as invalid to prevent next checks
+      // e.g. remove magic number or set fw_size to 0
+    }
+  }
+
+  return NONE; // No valid firmware found
 }
 
-uint8_t Boot_CheckForFirmwareUpdate(void)
+uint8_t Boot_ValidateBLTwin()
 {
-  // This function can be implemented to check for a specific condition (e.g., a GPIO pin state, a
-  // command received over UART, etc.) For demonstration purposes, we'll just return 0 (no update)
-  return 0;
+
+  DBG_PRINT("Validating bootloader twin...\r\n");
+
+  const uint32_t current_crc =
+      Internal_ComputeCRC((const uint32_t *) BANK1_START_ADDR, BL_SIZE);
+  const uint32_t twin_crc =
+      Internal_ComputeCRC((const uint32_t *) BANK2_START_ADDR, BL_SIZE);
+
+  DBG_PRINT("Bootloader twin CRCs: current=%08" PRIX32 ", twin=%08" PRIX32 "\n",
+            current_crc,
+            twin_crc);
+
+  return (current_crc == twin_crc) && (current_crc != 0) ? STAT_OK : FAILURE;
 }

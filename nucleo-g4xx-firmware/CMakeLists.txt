@@ -104,10 +104,19 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${GENERATED_LINKER_SCRIPT}")
 
 
 #######################################################################################
-# Generate Binary, Hex, and OTA files
+# Generate Metadata (Version & Git Hash) with Auto-Reconfigure Triggers
 #######################################################################################
 
-# 1. Gather Metadata
+# 1. Track Git Hash changes automatically
+set(GIT_HEAD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.git/HEAD")
+set(GIT_INDEX_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.git/index")
+if(EXISTS "${GIT_HEAD_FILE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GIT_HEAD_FILE}")
+endif()
+if(EXISTS "${GIT_INDEX_FILE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GIT_INDEX_FILE}")
+endif()
+
 execute_process(
     COMMAND git rev-parse --short HEAD
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -121,38 +130,33 @@ endif()
 
 string(TIMESTAMP BUILD_TIMESTAMP "%Y%m%d_%H%M")
 
-set(FINAL_NAME "${CMAKE_PROJECT_NAME}_${GIT_HASH}_${BUILD_TIMESTAMP}")
+# 2. Track Firmware Version changes automatically
+if(NOT DEFINED FW_VERSION)
+    set(VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt")
+
+    # Force CMake to reconfigure if VERSION.txt is modified
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VERSION_FILE}")
+
+    if(EXISTS "${VERSION_FILE}")
+        file(READ "${VERSION_FILE}" FW_VERSION_RAW)
+        string(STRIP "${FW_VERSION_RAW}" FW_VERSION)
+    else()
+        set(FW_VERSION "1.0.0")
+    endif()
+endif()
+
+# Final build name
+set(FINAL_NAME "${CMAKE_PROJECT_NAME}_${GIT_HASH}_${BUILD_TIMESTAMP}_v${FW_VERSION}")
 set(BIN_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}.bin")
 set(HEX_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}.hex")
-set(OTA_FILE "${CMAKE_CURRENT_BINARY_DIR}/${FINAL_NAME}_OTA.bin")
 
-# 3. Define Paths for OTA Script
+#######################################################################################
+# Include Post-Build / Signing Logic
+#######################################################################################
+
+# Define paths needed by the signing script
 set(PYTHON_BUILD_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build_image.py")
-set(MEMORY_MAP_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/memory_map.h")
-set(FW_HEADER_H "${CMAKE_CURRENT_SOURCE_DIR}/../shared/Inc/fw_header.h")
+set(MEMORY_MAP_H "${SHARED_LIBS_ABS}/Inc/memory_map.h")
+set(FW_HEADER_H "${SHARED_LIBS_ABS}/Inc/fw_header.h")
 
-# 4. Single POST_BUILD sequence to guarantee execution order
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    # Generate standard Binary
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${BIN_FILE}
-    
-    # Generate Intel Hex
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${HEX_FILE}
-    
-    # Generate OTA Image (Depends on the .bin created above)
-    COMMAND python3 ${PYTHON_BUILD_SCRIPT}
-            --fw ${BIN_FILE}
-            --mem-map ${MEMORY_MAP_H}
-            --struct-hdr ${FW_HEADER_H}
-            --out ${OTA_FILE}
-            --version "1.0.0"
-            --git-hash "${GIT_HASH}"
-            
-    # Show Size
-    COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-    
-    COMMENT "Processing artifacts: Generating BIN, HEX, and OTA images..."
-    VERBATIM
-)
-
-message(STATUS "OTA will be generated at: ${OTA_FILE}")
+include(cmake/sign_firmware.cmake)

@@ -22,9 +22,17 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bootloader.h"
+#include "constants.h"
+#include "debug_print.h"
+#include "first_boot.h"
 #include "fw_header.h"
+#include "helpers.h"
 #include "memory_map.h"
+
+#include <stdint.h>
+#ifdef DEBUG
 #include <stdio.h>
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,6 +65,9 @@ static void MX_GPIO_Init(void);
 static void MX_CRC_Init(void);
 /* USER CODE BEGIN PFP */
 
+void Error_Handler_Blinking(uint8_t code);
+void Fallback_Loop(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -65,21 +76,20 @@ static void MX_CRC_Init(void);
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
+ * @brief  The application entry point.
+ * @retval int
+ */
 int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  fw_header_t fw1_header;
-  fw_header_t fw2_header;
-  uint8_t     update_needed = 0;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick.
+   */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -97,10 +107,11 @@ int main(void)
   MX_GPIO_Init();
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
-
   /* USER CODE END 2 */
 
-  /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
+  /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no
+   * parity
+   */
   BspCOMInit.BaudRate   = 115200;
   BspCOMInit.WordLength = COM_WORDLENGTH_8B;
   BspCOMInit.StopBits   = COM_STOPBITS_1;
@@ -113,64 +124,98 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  if (FB_RunFirstBootProcess() != STAT_OK)
+  {
+    Error_Handler_Blinking(ERROR_FIRST_BOOT);
+  }
+
+  uint8_t bank_switch_required = 0;
+
+  fw_header_t *fw1_header = (fw_header_t *) FW_1_HDR_ADDR;
+  fw_header_t *fw2_header = (fw_header_t *) FW_2_HDR_ADDR;
+
+  VALID_BANK valid_bank = Boot_ChooseBankToBoot(fw1_header, fw2_header);
+  if (valid_bank == NONE)
+  {
+    DBG_PRINT("No valid firmware found in either slot.\r\n");
+    Fallback_Loop();
+  }
+
+  bank_switch_required = (valid_bank == SLOT_2);
+
+  if (bank_switch_required)
+  {
+    if (Boot_ValidateBLTwin() != STAT_OK)
+    {
+      bank_switch_required = 0;
+      // Cannot perform update without a valid bootloader twin
+      // TODO: implement notification mechanism to inform the user about the
+      // invalid bootloader twin
+      DBG_PRINT("Bootloader twin is invalid. Cannot perform update.\r\n");
+      Error_Handler_Blinking(ERROR_BANK_SWITCH);
+    }
+  }
+
+  if (bank_switch_required)
+  {
+#ifdef DEBUG
+    DBG_PRINT("Current active bank: [%08X]\r\n", GetActiveBank());
+    DBG_PRINT("Bank switch required. Processing...\r\n");
+#endif
+    if (Boot_ToggleBank() != HAL_OK)
+    {
+      Error_Handler_Blinking(ERROR_BANK_SWITCH);
+    }
+    DBG_PRINT("The valid firmware in [%08X] is ready to run.\r\n", FW_1_ADDR);
+  }
+
+  // We should run app only from the first bank, so we can be sure the second
+  // bank is not accidentally executed without a proper bank switch
+  if (valid_bank == SLOT_1)
+  {
+    DBG_PRINT("Booting from [%08X] bank...\r\n", GetActiveBank());
+    Boot_JumpToApplication(FW_1_ADDR);
+  }
+  else
+  {
+    // This should never happen, but if it does, we can choose to jump to the
+    // valid firmware without switching banks, or enter the fallback loop. Here
+    // we choose to enter the fallback loop to avoid potential issues with an
+    // invalid bootloader twin.
+    Fallback_Loop();
+  }
+
   while (1)
   {
-    Boot_ReadFwHeader(FW_1_HDR_ADDR, &fw1_header);
-    Boot_ReadFwHeader(FW_2_HDR_ADDR, &fw2_header);
-
-    // New firmware update is needed if either:
-    // 1) The firmware in main partition is invalid (e.g., failed CRC check)
-    // 2) A specific condition is met indicating a new firmware update is available (e.g., a
-    // GPIO pin state, a command received over UART, etc.) 3) The firmware in the backup
-    // partition is valid
-
-    update_needed = Boot_CheckForFirmwareUpdate() ||
-                    (Boot_ValidateFirmware(&fw1_header, FW_1_ADDR, fw1_header.fw_size) == 0) ||
-                    (Boot_ValidateHeader(&fw2_header, FW_2_HDR_ADDR) == 1) ||
-                    (Boot_ValidateFirmware(&fw2_header, FW_2_ADDR, fw2_header.fw_size) == 1);
-
-    if (update_needed)
-    {
-      Boot_PerformCopyUpdate(FW_2_HDR_ADDR, FW_1_HDR_ADDR, fw2_header.fw_size + FW_HDR_SIZE);
-    }
-
-    // Validate the firmware in the main partition, and if valid, jump to it. Otherwise, stay in
-    // the bootloader and wait for a valid firmware update to be available.
-    if (Boot_ValidateFirmware(&fw1_header, FW_1_ADDR, fw1_header.fw_size) &&
-        Boot_ValidateHeader(&fw1_header, FW_1_HDR_ADDR))
-    {
-#ifdef DEBUG
-      printf("The valid firmware in [%08X] is ready to run.\r\n", FW_1_ADDR);
-#endif
-      Boot_JumpToApplication(FW_1_ADDR);
-    }
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-    // If we reach this point, it means the bootloader has encountered an error
-    Error_Handler_Blinking(BOOTLOADER_ERROR);
+    // If we reach this point, it means the bootloader has encountered an
+    // error
+    Fallback_Loop();
   }
   /* USER CODE END 3 */
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+ * @brief System Clock Configuration
+ * @retval None
+ */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-  */
+   */
   HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
   /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
+   * in the RCC_OscInitTypeDef structure.
+   */
   RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -187,9 +232,9 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType =
-      RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -202,10 +247,10 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief CRC Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief CRC Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_CRC_Init(void)
 {
 
@@ -232,10 +277,10 @@ static void MX_CRC_Init(void)
 }
 
 /**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
+ * @brief GPIO Initialization Function
+ * @param None
+ * @retval None
+ */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -277,28 +322,28 @@ void Error_Handler_Blinking(uint8_t code)
 {
   switch (code)
   {
-  case BOOTLOADER_ERROR: {
-    // For BOOTLOADER_ERROR, wait for firmware update or reset
-    // In that case we should allow interrupts to be handled
+  // Hang in the error loop waiting for reset, and blink the LED with
+  // different patterns based on the error code
+  case ERROR_FIRST_BOOT: {
+    __disable_irq();
     while (1)
     {
-      for (uint8_t i = 0; i < 3; i++)
-      {
-        for (volatile uint8_t j = 0; j <= i; j++)
-        {
-          HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
-          HAL_Delay(200);
-          HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
-          HAL_Delay(200);
-        }
-        HAL_Delay(800);
-      }
+      HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+      for (volatile uint32_t j = 0; j < 6000000; j++)
+        ;
+      HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+      for (volatile uint32_t j = 0; j < 1000000; j++)
+        ;
+      HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+      for (volatile uint32_t j = 0; j < 6000000; j++)
+        ;
+      HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+      for (volatile uint32_t j = 0; j < 12000000; j++)
+        ;
     }
+
     break;
   }
-
-  // Hang in the error loop waiting for reset, and blink the LED with different patterns based on
-  // the error code
   case ERROR_INIT_FAILURE:
   default: {
     __disable_irq();
@@ -321,12 +366,30 @@ void Error_Handler_Blinking(uint8_t code)
   }
 }
 
+void Fallback_Loop(void)
+{
+#ifdef DEBUG
+  printf("Entering fallback loop. No valid firmware to boot.\r\n");
+#endif
+  while (1)
+  {
+    // In this loop, the bootloader is running but no valid firmware was
+    // found. We can implement a simple blinking pattern to indicate this
+    // state, and wait for a firmware update to be triggered (e.g., via UART
+    // command or external pin).
+    HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+    HAL_Delay(2000);
+    HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+    HAL_Delay(2000);
+  }
+}
+
 /* USER CODE END 4 */
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -335,17 +398,18 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-       ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* User can add his own implementation to report the file name and line
+     number, ex: printf("Wrong parameters value: file %s on line %d\r\n",
+     file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
