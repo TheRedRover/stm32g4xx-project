@@ -56,7 +56,7 @@ if command -v srec_cat &>/dev/null; then
     echo ""
     echo "=== Done ==="
     echo "Full image: $TARGET_DIR/full_image.bin"
-    echo "Flash with: probe-rs download --chip STM32G474RETx $TARGET_DIR/full_image.bin"
+    echo "Flash with: probe-rs download --chip STM32G474RETx --binary-format bin --base-address 0x08000000 $TARGET_DIR/full_image.bin"
 else
     echo "WARNING: srec_cat not found, skipping OTA image generation."
     echo "Install srecord: sudo pacman -S srecord  (or apt install srecord)"

@@ -49,7 +49,7 @@ This builds both crates in release mode, extracts `.bin` files, checks size limi
 Output files in `target/thumbv7em-none-eabihf/release/`:
 - `bootloader.bin` -- raw bootloader binary
 - `firmware.bin` -- raw firmware binary
-- `full_image.bin` -- stitched bootloader + header + firmware (ready to flash)
+- `full_image.bin` -- stitched bootloader + header + firmware image for flash base `0x08000000`
 
 ### Build individual crates
 
@@ -70,7 +70,7 @@ Tests cover memory map constants, header struct layout, CRC32 correctness, and v
 
 ```bash
 # Flash the combined image
-probe-rs download --chip STM32G474RETx target/thumbv7em-none-eabihf/release/full_image.bin
+probe-rs download --chip STM32G474RETx --binary-format bin --base-address 0x08000000 target/thumbv7em-none-eabihf/release/full_image.bin
 
 # Or run firmware directly with defmt log output
 cargo run --release -p firmware
