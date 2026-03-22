@@ -679,7 +679,6 @@ name = "shared"
 version = "0.1.0"
 dependencies = [
  "crc",
- "defmt 1.0.1",
 ]
 
 [[package]]

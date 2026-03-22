@@ -48,7 +48,7 @@ impl FwHeader {
     /// # Safety
     /// `addr` must point to a valid, readable memory region of at least 128 bytes.
     pub unsafe fn from_addr(addr: u32) -> Self {
-        core::ptr::read_volatile(addr as *const Self)
+        unsafe { core::ptr::read_volatile(addr as *const Self) }
     }
 
     /// Check if the magic number is valid.

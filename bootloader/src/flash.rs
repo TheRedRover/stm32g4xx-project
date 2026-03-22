@@ -17,29 +17,44 @@ impl<'d> FlashOps<'d> {
 
     /// Copy firmware from Slot 2 to Slot 1 (header + firmware data).
     ///
-    /// Erases the destination, then copies `fw_size` bytes of firmware plus the header.
+    /// Erases the destination (sector-aligned), then copies `fw_size` bytes of
+    /// firmware plus the header. Write chunks are padded to the flash write size
+    /// (8 bytes) with 0xFF.
     pub fn copy_slot2_to_slot1(&mut self, fw_size: u32) -> Result<(), flash::Error> {
+        // Bounds check: fw_size must fit within a slot
+        if fw_size > FW_2_SIZE {
+            return Err(flash::Error::Unaligned);
+        }
+
         let total_size = FW_HDR_SIZE + fw_size;
 
         // Offsets from FLASH_BASE (embassy flash API uses offsets, not absolute addresses)
         let src_offset = FW_2_HDR_ADDR - FLASH_BASE_ADDR;
         let dst_offset = FW_1_HDR_ADDR - FLASH_BASE_ADDR;
 
-        // Erase destination (Slot 1 header + firmware area)
-        self.flash.blocking_erase(dst_offset, dst_offset + total_size)?;
+        // Erase destination — round up to next sector boundary (4096 bytes)
+        const SECTOR_SIZE: u32 = 4096;
+        let erase_end = (dst_offset + total_size + SECTOR_SIZE - 1) & !(SECTOR_SIZE - 1);
+        self.flash.blocking_erase(dst_offset, erase_end)?;
 
-        // Copy data in chunks (read from source, write to destination)
-        // Embassy flash doesn't have a direct memory-to-flash copy,
-        // so we read from flash into a buffer and write it back.
-        let mut buf = [0u8; 256];
+        // Copy data in chunks (read from source, write to destination).
+        // Write chunks must be 8-byte aligned; pad the last chunk with 0xFF (erased flash).
+        const WRITE_ALIGN: usize = 8;
+        let mut buf = [0xFFu8; 256];
         let mut offset = 0u32;
         while offset < total_size {
-            let chunk_size = core::cmp::min(256, (total_size - offset) as usize);
+            let remaining = (total_size - offset) as usize;
+            let chunk_size = core::cmp::min(256, remaining);
+            let padded_size = (chunk_size + WRITE_ALIGN - 1) & !(WRITE_ALIGN - 1);
+
+            // Fill buffer with 0xFF before reading so padding bytes are erased-flash-safe
+            buf[chunk_size..padded_size].fill(0xFF);
+
             self.flash
                 .blocking_read(src_offset + offset, &mut buf[..chunk_size])?;
             self.flash
-                .blocking_write(dst_offset + offset, &buf[..chunk_size])?;
-            offset += chunk_size as u32;
+                .blocking_write(dst_offset + offset, &buf[..padded_size])?;
+            offset += padded_size as u32;
         }
 
         Ok(())

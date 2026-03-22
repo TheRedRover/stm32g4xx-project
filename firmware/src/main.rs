@@ -34,6 +34,10 @@ fn make_config() -> embassy_stm32::Config {
 fn main() -> ! {
     let p = embassy_stm32::init(make_config());
 
+    // Re-enable interrupts — the bootloader disables them before jumping,
+    // and embassy_stm32::init()'s critical section preserves that state.
+    unsafe { cortex_m::interrupt::enable() };
+
     // GPIO PA5 as push-pull output (LED)
     let mut led = Output::new(p.PA5, Level::High, Speed::Low);
 

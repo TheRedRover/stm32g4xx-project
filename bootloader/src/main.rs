@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(never_type)]
 
 use defmt_rtt as _;
 use panic_halt as _;
@@ -50,13 +51,18 @@ fn validate_header(crc: &mut crc_hw::HwCrc<'_>, header: &FwHeader, header_addr: 
 }
 
 /// Validate the firmware data CRC.
-fn validate_firmware(crc: &mut crc_hw::HwCrc<'_>, header: &FwHeader, fw_addr: u32) -> bool {
+fn validate_firmware(
+    crc: &mut crc_hw::HwCrc<'_>,
+    header: &FwHeader,
+    fw_addr: u32,
+    max_fw_size: u32,
+) -> bool {
     if !header.is_valid_magic() {
         return false;
     }
 
     let fw_size = { header.fw_size }; // Copy from packed struct
-    if fw_size == 0 {
+    if fw_size == 0 || fw_size > max_fw_size {
         return false;
     }
 
@@ -100,7 +106,7 @@ fn main() -> ! {
         if check_for_update() {
             // Validate Slot 2
             if validate_header(&mut crc, &fw2_header, FW_2_HDR_ADDR)
-                && validate_firmware(&mut crc, &fw2_header, FW_2_ADDR)
+                && validate_firmware(&mut crc, &fw2_header, FW_2_ADDR, FW_2_SIZE)
             {
                 defmt::info!("Valid update in Slot 2, copying to Slot 1...");
                 let fw2_size = { fw2_header.fw_size };
@@ -113,12 +119,13 @@ fn main() -> ! {
 
         // Validate Slot 1 and jump
         if validate_header(&mut crc, &fw1_header, FW_1_HDR_ADDR)
-            && validate_firmware(&mut crc, &fw1_header, FW_1_ADDR)
+            && validate_firmware(&mut crc, &fw1_header, FW_1_ADDR, FW_1_SIZE)
         {
             defmt::info!("Valid firmware, jumping to {:#010X}", FW_1_ADDR);
             unsafe {
-                jump::jump_to_application(FW_1_ADDR);
+                let Err(()) = jump::jump_to_application(FW_1_ADDR);
             }
+            defmt::error!("Invalid firmware vectors!");
         }
 
         // No valid firmware found
