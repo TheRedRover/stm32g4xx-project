@@ -24,12 +24,6 @@ static void do_jump(uint32_t sp, uint32_t pc)
 
 void Boot_JumpToApplication(uint32_t start_addr)
 {
-    // static variables are stored in RAM, not on the stack.
-    // This prevents them from being lost after __set_MSP()
-    static volatile uint32_t appStack;
-    static volatile uint32_t appResetHandler;
-    static pFunction appEntry;
-
     volatile vector_table_t *app_vectors = (vector_table_t *)start_addr;
 
     if ((app_vectors->stack_pointer & 0xFF000000U) != 0x20000000U) {
@@ -45,15 +39,6 @@ void Boot_JumpToApplication(uint32_t start_addr)
 #endif
         return;
     }
-
-    appStack = app_vectors->stack_pointer;
-    appResetHandler = app_vectors->reset_handler;
-    appEntry = (pFunction)appResetHandler;
-
-#ifdef DEBUG
-    printf("[BL] Jumping to app at: 0x%08lX\n", start_addr);
-    printf("[BL] App SP: 0x%08lX, App RH: 0x%08lX\n", appStack, appResetHandler);
-#endif
 
     __disable_irq();
 

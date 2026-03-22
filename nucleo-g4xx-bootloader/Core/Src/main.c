@@ -125,7 +125,6 @@ int main(void)
         Boot_PerformCopyUpdate(FW_2_ADDR, FW_1_ADDR, fw2_header.fw_size);
       }
     }
-#define DEBUG
 
     if (Boot_ValidateFirmware(&fw1_header, FW_1_ADDR, fw1_header.fw_size) &&
         Boot_ValidateHeader(&fw1_header, FW_1_HDR_ADDR))
