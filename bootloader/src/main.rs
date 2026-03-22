@@ -87,7 +87,7 @@ fn check_for_update() -> bool {
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
-    let p = embassy_stm32::init(make_config());
+    let mut p = embassy_stm32::init(make_config());
 
     // GPIO PA5 as push-pull output (LED for error indication)
     let mut led = Output::new(p.PA5, Level::Low, Speed::Low);
@@ -98,21 +98,20 @@ fn main() -> ! {
     defmt::info!("Bootloader started");
 
     loop {
-        // Read firmware headers from both slots
         let fw1_header = unsafe { FwHeader::from_addr(FW_1_HDR_ADDR) };
-        let fw2_header = unsafe { FwHeader::from_addr(FW_2_HDR_ADDR) };
 
         // Check for firmware update
         if check_for_update() {
-            // Validate Slot 2
+            let fw2_header = unsafe { FwHeader::from_addr(FW_2_HDR_ADDR) };
             if validate_header(&mut crc, &fw2_header, FW_2_HDR_ADDR)
                 && validate_firmware(&mut crc, &fw2_header, FW_2_ADDR, FW_2_SIZE)
             {
                 defmt::info!("Valid update in Slot 2, copying to Slot 1...");
                 let fw2_size = { fw2_header.fw_size };
-                let mut flash_ops = flash::FlashOps::new(p.FLASH);
-                if let Err(e) = flash_ops.copy_slot2_to_slot1(fw2_size) {
-                    defmt::error!("Flash copy failed: {}", e);
+                let mut flash_ops = flash::FlashOps::new(p.FLASH.reborrow());
+                match flash_ops.copy_slot2_to_slot1(fw2_size) {
+                    Ok(()) => continue,
+                    Err(e) => defmt::error!("Flash copy failed: {}", e),
                 }
             }
         }

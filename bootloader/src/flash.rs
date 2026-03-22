@@ -1,4 +1,4 @@
-use embassy_stm32::flash::{self, Flash};
+use embassy_stm32::flash::{self, Flash, MAX_ERASE_SIZE, WRITE_SIZE};
 use embassy_stm32::Peri;
 
 use shared::memory_map::*;
@@ -23,7 +23,7 @@ impl<'d> FlashOps<'d> {
     pub fn copy_slot2_to_slot1(&mut self, fw_size: u32) -> Result<(), flash::Error> {
         // Bounds check: fw_size must fit within a slot
         if fw_size > FW_2_SIZE {
-            return Err(flash::Error::Unaligned);
+            return Err(flash::Error::Size);
         }
 
         let total_size = FW_HDR_SIZE + fw_size;
@@ -32,20 +32,19 @@ impl<'d> FlashOps<'d> {
         let src_offset = FW_2_HDR_ADDR - FLASH_BASE_ADDR;
         let dst_offset = FW_1_HDR_ADDR - FLASH_BASE_ADDR;
 
-        // Erase destination — round up to next sector boundary (4096 bytes)
-        const SECTOR_SIZE: u32 = 4096;
-        let erase_end = (dst_offset + total_size + SECTOR_SIZE - 1) & !(SECTOR_SIZE - 1);
+        // Erase destination — round up to next sector boundary
+        let erase_end = (dst_offset + total_size + MAX_ERASE_SIZE as u32 - 1)
+            & !(MAX_ERASE_SIZE as u32 - 1);
         self.flash.blocking_erase(dst_offset, erase_end)?;
 
         // Copy data in chunks (read from source, write to destination).
-        // Write chunks must be 8-byte aligned; pad the last chunk with 0xFF (erased flash).
-        const WRITE_ALIGN: usize = 8;
+        // Write chunks must be WRITE_SIZE-aligned; pad the last chunk with 0xFF (erased flash).
         let mut buf = [0xFFu8; 256];
         let mut offset = 0u32;
         while offset < total_size {
             let remaining = (total_size - offset) as usize;
             let chunk_size = core::cmp::min(256, remaining);
-            let padded_size = (chunk_size + WRITE_ALIGN - 1) & !(WRITE_ALIGN - 1);
+            let padded_size = (chunk_size + WRITE_SIZE - 1) & !(WRITE_SIZE - 1);
 
             // Fill buffer with 0xFF before reading so padding bytes are erased-flash-safe
             buf[chunk_size..padded_size].fill(0xFF);

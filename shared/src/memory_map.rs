@@ -16,9 +16,6 @@ pub const FW_HDR_SIZE: u32 = 1 * 1024;
 /// Total size per slot (header + firmware): 240 KB
 pub const SLOT_TOTAL_SIZE: u32 = (TOTAL_FLASH_SIZE - BL_SIZE) / 2;
 
-/// Flash page size: 2 KB
-pub const FLASH_PAGE_SIZE: u32 = 2048;
-
 // --- Slot 1 ---
 
 /// Slot 1 header address
