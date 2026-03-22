@@ -21,7 +21,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "bootloader.h"
+#include "memory_map.h"
+#include "fw_header.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,6 +45,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 COM_InitTypeDef BspCOMInit;
+CRC_HandleTypeDef hcrc;
 
 /* USER CODE BEGIN PV */
 
@@ -50,6 +54,7 @@ COM_InitTypeDef BspCOMInit;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_CRC_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -67,7 +72,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  fw_header_t fw1_header;
+  fw_header_t fw2_header;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -88,6 +94,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_CRC_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -107,10 +114,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    Boot_ReadFwHeader(FW_1_HDR_ADDR, &fw1_header);
+    Boot_ReadFwHeader(FW_2_HDR_ADDR, &fw2_header);
+
+    if (Boot_CheckForFirmwareUpdate()) {
+      // Check the firmware in Slot 2 and if valid, copy it to Slot 1
+      if (Boot_ValidateFirmware(&fw2_header, FW_2_ADDR, fw2_header.fw_size) &&
+          Boot_ValidateHeader(&fw2_header, FW_2_HDR_ADDR))
+      {
+        Boot_PerformCopyUpdate(FW_2_ADDR, FW_1_ADDR, fw2_header.fw_size);
+      }
+    }
+#define DEBUG
+
+    if (Boot_ValidateFirmware(&fw1_header, FW_1_ADDR, fw1_header.fw_size) &&
+        Boot_ValidateHeader(&fw1_header, FW_1_HDR_ADDR))
+    {
+#ifdef DEBUG
+      printf("The valid firmware in [%08X] is ready to run.\r\n", FW_1_ADDR);
+#endif
+      Boot_JumpToApplication(FW_1_ADDR);
+    }
 
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
+
+    // If we reach this point, it means the bootloader has encountered an error
+    Error_Handler_Blinking(BOOTLOADER_ERROR);
   }
   /* USER CODE END 3 */
 }
@@ -162,6 +192,37 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief CRC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRC_Init(void)
+{
+
+  /* USER CODE BEGIN CRC_Init 0 */
+
+  /* USER CODE END CRC_Init 0 */
+
+  /* USER CODE BEGIN CRC_Init 1 */
+
+  /* USER CODE END CRC_Init 1 */
+  hcrc.Instance = CRC;
+  hcrc.Init.DefaultPolynomialUse = DEFAULT_POLYNOMIAL_ENABLE;
+  hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_ENABLE;
+  hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_BYTE;
+  hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_ENABLE;
+  hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_BYTES;
+  if (HAL_CRC_Init(&hcrc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CRC_Init 2 */
+
+  /* USER CODE END CRC_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -181,7 +242,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
-
+  
   /*Configure GPIO pin : GREEN_LED_Pin */
   GPIO_InitStruct.Pin = GREEN_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -195,6 +256,51 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+#ifdef DEBUG
+int _write(int file, char *ptr, int len)
+{
+    HAL_UART_Transmit(&hcom_uart[0], (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
+#endif
+
+void Error_Handler_Blinking(uint8_t code)
+{
+  switch (code) {
+    case BOOTLOADER_ERROR: {
+    // For BOOTLOADER_ERROR, wait for firmware update or reset
+    // In that case we should allow interrupts to be handled
+      while (1) {
+        for (uint8_t i = 0; i < 3; i++) {
+          for (volatile uint8_t j = 0; j <= i; j++) {
+            HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+            HAL_Delay(200);
+            HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+            HAL_Delay(200);
+          }
+          HAL_Delay(800);
+        }
+      }
+      break;
+    }
+
+    // Hang in the error loop waiting for reset, and blink the LED with different patterns based on the error code
+    case ERROR_INIT_FAILURE:
+    default: {
+      __disable_irq();
+      while (1) {
+          for (int i = 0; i < code; i++) {
+              HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+              for(volatile uint32_t j = 0; j < 2000000; j++);
+              HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+              for(volatile uint32_t j = 0; j < 2000000; j++);
+          }
+          for(volatile uint32_t j = 0; j < 12000000; j++);
+      }
+      break;
+    }
+  }
+}
 
 /* USER CODE END 4 */
 
@@ -205,11 +311,7 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+  Error_Handler_Blinking(ERROR_INIT_FAILURE);
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT

@@ -1,2 +1,4 @@
+**/build/**
+**.ld
 .vscode
-**build**
+firmware

@@ -37,9 +37,8 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
-set(SHARED_LIBS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../shared
-)
+get_filename_component(SHARED_LIBS_ABS "${CMAKE_CURRENT_SOURCE_DIR}/../shared" ABSOLUTE)
+file(GLOB SHARED_INCLUDES_HEADERS "${SHARED_LIBS_ABS}/Inc/*.h")
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -48,12 +47,13 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/bootloader.c
     # Add user sources here
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    ${SHARED_LIBS}
+    ${SHARED_LIBS_ABS}/Inc
     # Add user defined include paths
 )
 
@@ -71,3 +71,74 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+#######################################################################################
+# Linker script generation from template with memory map header
+#######################################################################################
+
+
+# Force Absolute Paths
+get_filename_component(SHARED_LIBS_ABS "${CMAKE_CURRENT_SOURCE_DIR}/../shared" ABSOLUTE)
+file(GLOB SHARED_INCLUDES_HEADERS "${SHARED_LIBS_ABS}/Inc/*.h")
+
+set(LINKER_SCRIPT_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld.S")
+set(GENERATED_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32G474XX_FLASH.ld")
+
+# Preprocess with explicit absolute include paths
+add_custom_command(
+    OUTPUT "${GENERATED_LINKER_SCRIPT}"
+    COMMAND ${CMAKE_C_COMPILER} -E -P -xc
+            "-D__LINKER_SCRIPT__"           # Define a macro to conditionally include content in the template
+            "-I${CMAKE_CURRENT_SOURCE_DIR}" 
+            "-I${SHARED_LIBS_ABS}/Inc"          # Absolute path to shared folder
+            "${LINKER_SCRIPT_TEMPLATE}" 
+            -o "${GENERATED_LINKER_SCRIPT}"
+    DEPENDS "${LINKER_SCRIPT_TEMPLATE}" "${SHARED_INCLUDES_HEADERS}"
+    COMMENT "Preprocessing linker script..."
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    VERBATIM
+)
+
+# Apply to target
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${GENERATED_LINKER_SCRIPT}")
+
+
+#######################################################################################
+# Generate Binary and Hex files automatically
+#######################################################################################
+
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_HASH)
+    set(GIT_HASH "00000000")
+endif()
+
+string(TIMESTAMP BUILD_TIMESTAMP "%Y%m%d_%H%M")
+
+set(FINAL_NAME "${CMAKE_PROJECT_NAME}_${GIT_HASH}_${BUILD_TIMESTAMP}")
+
+message(STATUS "Target Filename: ${FINAL_NAME}")
+
+# This creates the .bin file
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${FINAL_NAME}.bin
+    COMMENT "Generating binary image: ${FINAL_NAME}.bin"
+)
+
+# This creates the .hex file
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${FINAL_NAME}.hex
+    COMMENT "Generating Intel Hex file: ${FINAL_NAME}.hex"
+)
+
+# Optional: show the size in the terminal every time you build
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+    COMMENT "Final binary size:"
+)
+
