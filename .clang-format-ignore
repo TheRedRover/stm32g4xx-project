@@ -1,0 +1,11 @@
+**/Drivers/**/*
+
+**/Core/Inc/stm32g4xx_*.h
+**/Core/Inc/main.h
+
+**/Core/Src/stm32g4xx_*.c
+**/Core/Src/syscalls.c
+**/Core/Src/sysmem.c
+**/Core/Src/system_*.c
+
+**/Middlewares/**/*
