@@ -1,0 +1,13 @@
+[package]
+name = "firmware"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared", features = ["defmt"] }
+cortex-m = { workspace = true, features = ["critical-section-single-core"] }
+cortex-m-rt = { workspace = true, features = ["device"] }
+embassy-stm32 = { workspace = true }
+defmt = { workspace = true }
+defmt-rtt = { workspace = true }
+panic-probe = { workspace = true }

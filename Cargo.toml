@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "shared",
+    "bootloader",
+    "firmware",
+]
+
+[workspace.dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+embassy-stm32 = { version = "0.3.0", features = ["stm32g474re", "defmt", "single-bank"] }
+defmt = "1.0"
+defmt-rtt = "1.1"
+panic-halt = "1.0"
+panic-probe = { version = "1.0", features = ["print-defmt"] }
+crc = "3"
+
+[profile.release]
+opt-level = "s"
+debug = 2
+lto = true
+codegen-units = 1
