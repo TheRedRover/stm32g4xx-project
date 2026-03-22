@@ -14,6 +14,8 @@
   #define _U(x) x ## U
 #endif
 
+#define TOTAL_FLASH_SIZE          (512 * _U(1024))
+
 /* Flash Base */
 #define FLASH_BASE_ADDR           _U(0x08000000)
 
@@ -23,7 +25,7 @@
 
 /* Header & Partition Sizes */
 #define FW_HDR_SIZE           (1 * _U(1024))
-#define SLOT_TOTAL_SIZE          (240 * _U(1024))
+#define SLOT_TOTAL_SIZE       ((TOTAL_FLASH_SIZE - BL_SIZE) / 2)
 
 /* Slot 1 */
 #define FW_1_HDR_ADDR       (BL_START_ADDR + BL_SIZE)
