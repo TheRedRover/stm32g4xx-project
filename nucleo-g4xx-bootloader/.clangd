@@ -1,5 +1,6 @@
 CompileFlags:
   Add:
+    - '-I../shared/Inc'
     - '-ferror-limit=0'
     - '-Wno-implicit-int'
   CompilationDatabase: build/Release

@@ -1,0 +1,6 @@
+[submodule "nucleo-g4xx-bootloader/Middlewares/tinycrypt"]
+	path = nucleo-g4xx-bootloader/Middlewares/tinycrypt
+	url = git@github.com:intel/tinycrypt.git
+[submodule "nucleo-g4xx-bootloader/Middlewares/micro-ecc"]
+	path = nucleo-g4xx-bootloader/Middlewares/micro-ecc
+	url = https://github.com/kmackay/micro-ecc.git

@@ -10,6 +10,7 @@ extern "C" {
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "memory_map.h"
 
 #define FW_MAGIC_NUMBER 0x47344657
 /* Defines for packing/unpacking */
@@ -23,21 +24,18 @@ extern "C" {
   (((uint32_t) (maj) << VER_MAJOR_SHIFT) | ((uint32_t) (min) << VER_MINOR_SHIFT) |                 \
    ((uint32_t) (patch) & VER_PATCH_MASK))
 
-typedef struct __attribute__((packed))
-{
-  uint32_t magic_number;
-  uint32_t fw_size;
-  uint32_t version;
-  uint32_t fw_crc;
-  uint32_t timestamp;
-  char     git_hash[8];
-  char     reserved[96]; // Reserved for future use
-  uint32_t header_crc; // should be the last field in the header, so that the CRC can be
-  // calculated over all the preceding fields
-
+typedef struct __attribute__((packed)) {
+    uint8_t signature[64];
+    uint32_t crc;
+    uint32_t magic_number;
+    uint32_t fw_size;
+    uint32_t version;
+    uint32_t timestamp;
+    char git_hash[8];
+    char reserved[36]; // Reserved for future use
 } fw_header_t;
 
-_Static_assert(sizeof(fw_header_t) == 128, "Header size must be exactly 128 bytes");
+_Static_assert(sizeof(fw_header_t) == FW_HDR_SIZE, "Header size must be exactly 128 bytes");
 
 /**
  * @brief Locates the firmware header in Flash memory.

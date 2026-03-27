@@ -9,3 +9,5 @@
 **/Core/Src/system_*.c
 
 **/Middlewares/**/*
+
+**/monocypher**
